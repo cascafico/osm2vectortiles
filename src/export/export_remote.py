@@ -16,6 +16,7 @@ Options:
 
 """
 import time
+import threading
 import sys
 import os
 import os.path
@@ -156,7 +157,7 @@ def export_remote(tm2source, rabbitmq_url, queue_name, result_queue_name,
 
         try:
             start = time.time()
-            subprocess.check_call(tilelive_cmd, timeout=5*60)
+            subprocess.check_call(tilelive_cmd, timeout=8*60)
             end = time.time()
 
             print('Rendering time: {}'.format(humanize.naturaltime(end - start)))
@@ -181,12 +182,22 @@ def export_remote(tm2source, rabbitmq_url, queue_name, result_queue_name,
             raise e
 
     channel.basic_consume(callback, queue=queue_name)
+    conn_timer = None
+
+    def ensure_connection():
+        global conn_timer
+        connection.process_data_events()
+        conn_timer = threading.Timer(10, ensure_connection).start()
+
+    ensure_connection()
+
     try:
         channel.start_consuming()
     except KeyboardInterrupt:
         channel.stop_consuming()
 
     connection.close()
+    conn_timer.cancel()
 
 
 def configure_rabbitmq(channel):
