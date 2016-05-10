@@ -19,7 +19,6 @@ import sqlite3
 import pika
 import humanize
 import functools
-import threading
 from urllib.request import urlretrieve
 from docopt import docopt
 
@@ -89,13 +88,6 @@ def merge_results(rabbitmq_url, merge_target, result_queue_name):
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     channel.basic_consume(callback, queue=result_queue_name)
-
-    def ensure_connection():
-        connection.process_data_events()
-        threading.Timer(10, ensure_connection).start()
-
-    ensure_connection()
-
     try:
         channel.start_consuming()
     except KeyboardInterrupt:
