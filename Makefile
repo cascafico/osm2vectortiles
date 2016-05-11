@@ -1,6 +1,6 @@
 .PHONY: all
 
-all: postgis export-mbtiles import-osm import-external import-sql create-extracts changed-tiles generate-jobs merge-jobs compare-visual mapping-qa-report
+all: postgis export-mbtiles import-osm import-external import-sql create-extracts changed-tiles generate-jobs merge-jobs compare-visual mapping-qa-report beanstalkd
 
 fast: postgis export-mbtiles import-osm import-sql create-extracts changed-tiles generate-jobs merge-jobs
 
@@ -36,3 +36,6 @@ compare-visual:
 
 mapping-qa-report:
 	docker build -t osm2vectortiles/mapping-qa-report tools/mapping-qa-report
+
+beanstalkd:
+	docker build -t osm2vectortiles/beanstalkd src/beanstalkd

@@ -5,13 +5,12 @@ set -o nounset
 
 source utils.sh
 
-readonly QUEUE_NAME=${QUEUE_NAME:-osm2vectortiles_jobs}
 readonly BUCKET_NAME=${BUCKET_NAME:-osm2vectortiles-jobs}
-readonly RABBITMQ_URI=${RABBITMQ_URI:-"amqp://osm:osm@rabbitmq:5672/?blocked_connection_timeout=1200&heartbeat=0"}
+readonly BEANSTALKD_HOST=${BEANSTALKD_HOST:-"beanstalkd"}
 
 function export_remote_mbtiles() {
-    exec python export_remote.py "$RABBITMQ_URI" \
-        --tm2source="$DEST_PROJECT_DIR" \
+    exec python export_remote.py "$DEST_PROJECT_DIR" \
+        --host="$BEANSTALKD_HOST" \
         --bucket="$BUCKET_NAME"
 }
 

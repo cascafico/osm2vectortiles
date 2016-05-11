@@ -2,7 +2,8 @@
 """Wrapper around tilelive-copy for exporting vector tiles from tm2source.
 
 Usage:
-  export_remote.py <rabbitmq_url> --tm2source=<tm2source> [--job-queue=<job-queue>] [--bucket=<bucket>] [--render_scheme=<scheme>]
+  export_remote.py <tm2source> [--job-queue=<job-queue>] [--host=<host>] [--port=<port>]
+ [--bucket=<bucket>] [--render_scheme=<scheme>]
   export_remote.py (-h | --help)
   export_remote.py --version
 
@@ -10,19 +11,17 @@ Options:
   -h --help                 Show this screen.
   --version                 Show version.
   --render_scheme=<scheme>  Either pyramid or scanline [default: pyramid]
-  --job-queue=<job-queue>   Job queue name [default: jobs]
-  --tm2source=<tm2source>   Directory of tm2source
   --bucket=<bucket>         S3 Bucket name for storing results [default: osm2vectortiles-jobs]
-
+  --host=<host>             Host of Beanstalkd server [default: localhost]
+  --port=<port>             Port of Beanstalkd server [default: 11300]
 """
 import time
-import threading
+import beanstalkc
 import sys
 import os
 import os.path
 import json
 import humanize
-import pika
 from boto.s3.connection import S3Connection, OrdinaryCallingFormat
 from mbtoolbox.optimize import find_optimizable_tiles, all_descendant_tiles
 from mbtoolbox.mbtiles import MBTiles
@@ -111,21 +110,14 @@ def optimize_mbtiles(mbtiles_file, mask_level=8):
         mbtiles.remove_tiles(tiles)
 
 
-def export_remote(tm2source, rabbitmq_url, queue_name, result_queue_name,
-                  failed_queue_name, render_scheme, bucket_name):
+def export_remote(tm2source, beanstalk, bucket_name, render_scheme):
     host = os.getenv('AWS_S3_HOST', 'mock-s3')
     port = int(os.getenv('AWS_S3_PORT', 8080))
-
     bucket = connect_s3(host, port, bucket_name)
 
-    connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
-    channel = connection.channel()
-    channel.basic_qos(prefetch_count=1)
-    channel.confirm_delivery()
-    configure_rabbitmq(channel)
-
-    def callback(ch, method, properties, body):
-        msg = json.loads(body.decode('utf-8'))
+    job = beanstalk.reserve()
+    while job is not None:
+        msg = json.loads(job.body.decode('utf-8'))
         task_id = msg['id']
         mbtiles_file = task_id + '.mbtiles'
 
@@ -155,71 +147,24 @@ def export_remote(tm2source, rabbitmq_url, queue_name, result_queue_name,
         else:
             raise ValueError("Message must be either of type pyramid or list")
 
-        try:
-            start = time.time()
-            subprocess.check_call(tilelive_cmd, timeout=8*60)
-            end = time.time()
+        start = time.time()
+        subprocess.check_call(tilelive_cmd, timeout=8*60)
+        end = time.time()
 
-            print('Rendering time: {}'.format(humanize.naturaltime(end - start)))
-            print('Optimize MBTiles file size')
-            optimize_mbtiles(mbtiles_file)
-            upload_mbtiles(bucket, mbtiles_file)
-            os.remove(mbtiles_file)
+        print('Rendering time: {}'.format(humanize.naturaltime(end - start)))
+        print('Optimize MBTiles file size')
+        optimize_mbtiles(mbtiles_file)
+        upload_mbtiles(bucket, mbtiles_file)
+        os.remove(mbtiles_file)
 
-            print('Upload mbtiles {}'.format(mbtiles_file))
+        print('Upload mbtiles {}'.format(mbtiles_file))
 
-            download_link = s3_url(host, port, bucket_name, mbtiles_file)
-            result_msg = create_result_message(task_id, download_link, msg)
+        download_link = s3_url(host, port, bucket_name, mbtiles_file)
+        result_msg = create_result_message(task_id, download_link, msg)
+        beanstalk.put(json.dumps(result_msg), ttr=20*60)
 
-            durable_publish(channel, result_queue_name,
-                            body=json.dumps(result_msg))
-            channel.basic_ack(delivery_tag=method.delivery_tag)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            durable_publish(channel, failed_queue_name, body=body)
-            channel.basic_ack(delivery_tag=method.delivery_tag)
-            channel.stop_consuming()
-            time.sleep(5)  # Give RabbitMQ some time
-            raise e
-
-    channel.basic_consume(callback, queue=queue_name)
-    conn_timer = None
-
-    def ensure_connection():
-        global conn_timer
-        connection.process_data_events()
-        conn_timer = threading.Timer(10, ensure_connection).start()
-
-    ensure_connection()
-
-    try:
-        channel.start_consuming()
-    except KeyboardInterrupt:
-        channel.stop_consuming()
-
-    connection.close()
-    conn_timer.cancel()
-
-
-def configure_rabbitmq(channel):
-    """Setup all queues and topics for RabbitMQ"""
-
-    def queue_declare(queue):
-        return channel.queue_declare(queue=queue, durable=True)
-
-    queue_declare('jobs')
-    queue_declare('failed-jobs')
-    queue_declare('results')
-
-
-def durable_publish(channel, queue, body):
-    """
-    Publish a message body to a queue in a channel and ensure it stays
-    durable on RabbitMQ server restart
-    """
-    properties = pika.BasicProperties(delivery_mode=2,
-                                      content_type='application/json')
-    channel.basic_publish(exchange='', routing_key=queue,
-                          body=body, properties=properties)
+        job.delete()
+        job = beanstalk.reserve()
 
 
 def write_list_file(fh, tiles):
@@ -228,14 +173,18 @@ def write_list_file(fh, tiles):
 
 
 def main(args):
+    beanstalk = beanstalkc.Connection(host=args.get('--host'),
+                                      port=int(args.get('--port')))
+
+    beanstalk.use('results')
+    beanstalk.ignore('results')
+    beanstalk.watch('jobs')
+
     export_remote(
-        args['--tm2source'],
-        args['<rabbitmq_url>'],
-        args['--job-queue'],
-        'results',
-        'failed-jobs',
-        args['--render_scheme'],
+        args['<tm2source>'],
+        beanstalk,
         args['--bucket'],
+        args['--render_scheme'],
     )
 
 

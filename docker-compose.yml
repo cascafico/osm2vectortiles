@@ -2,10 +2,10 @@ pgdata:
   image: "tianon/true"
   volumes:
   - /var/lib/postgresql/data
-rabbitdata:
+beanstalkd-data:
   image: "tianon/true"
   volumes:
-  - /var/lib/rabbitmq
+  - /data
 cache:
   image: "tianon/true"
   volumes:
@@ -76,7 +76,7 @@ merge-jobs:
   volumes:
    - ./export:/data/export
   links:
-   - rabbitmq:rabbitmq
+   - beanstalkd:beanstalkd
    - mock-s3:mock-s3
 export-worker:
   image: "osm2vectortiles/export"
@@ -85,7 +85,7 @@ export-worker:
    - ./osm2vectortiles.tm2source:/data/tm2source
   links:
    - postgis:db
-   - rabbitmq:rabbitmq
+   - beanstalkd:beanstalkd
    - mock-s3:mock-s3
   environment:
     AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
@@ -132,17 +132,12 @@ mapbox-studio:
    - postgis:db
   ports:
    - "3000:3000"
-rabbitmq:
-  image: "osm2vectortiles/rabbitmq:management"
+beanstalkd:
+  image: "osm2vectortiles/beanstalkd"
   ports:
-  - "15672:15672"
-  - "5672:5672"
+   - "11300:11300"
   volumes_from:
-   - rabbitdata
-  environment:
-    RABBITMQ_DEFAULT_USER: "osm"
-    RABBITMQ_DEFAULT_PASS: "osm"
-    RABBITMQ_HEARTBEAT: "0"
+   - beanstalkd-data
 create-extracts:
   image: "osm2vectortiles/create-extracts"
   volumes:
