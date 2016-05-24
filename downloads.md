@@ -32,7 +32,7 @@ the [Open Database License](https://tldrlegal.com/license/odc-open-database-lice
 <div id="planet">
 	<div class="col12 download-item">
 		<div class="col4 download-title" onclick="location.href='https://osm2vectortiles-downloads.os.zhdk.cloud.switch.ch/v2.0/planet.mbtiles'">
-			Full Planet <br/><small>MD5: a426f297c4936f97f2a14fc5a386e3dd</small>
+			Full Planet <br/><small>MD5: 83582204cb4f17a19977c03196050e50</small>
 		</div>
 		<div class="col2" onclick="location.href='https://osm2vectortiles-downloads.os.zhdk.cloud.switch.ch/v2.0/planet.mbtiles'">
 			50 GB
